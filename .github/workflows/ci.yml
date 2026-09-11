@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-install-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Add the LarzOS apt repo
+        run: |
+          curl -fsSL https://larzos.com/apt/KEY.asc | sudo gpg --dearmor -o /usr/share/keyrings/larzos-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/larzos-archive-keyring.gpg] https://larzos.com/apt stable main" \
+            | sudo tee /etc/apt/sources.list.d/larzos.list
+          sudo apt-get update
+
+      - name: Install larz-system (brings larzscript + larz-pkg + larzos/wallet)
+        run: sudo apt-get install -y larz-system
+
+      - name: Syntax-check the source
+        run: larzscript --check larz-meter.lz
+
+      - name: Build the .deb
+        run: larz-pkg deb .
+
+      - name: Install the built package for real
+        run: sudo dpkg -i dist/larz-meter_*_all.deb
+
+      - name: Run the test suite against the installed binary
+        env:
+          LARZSCRIPT_PATH: /usr/lib/larzos
+        run: sh tests/run.sh
