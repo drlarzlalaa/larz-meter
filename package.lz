@@ -1,0 +1,21 @@
+# package.lz - build larz-meter as a real .deb via larz-pkg.
+#
+#   larz-pkg deb .          -> dist/larz-meter_0.1.0_all.deb
+#   sudo dpkg -i dist/larz-meter_0.1.0_all.deb
+#   larz-meter --help
+
+import "larzos/pkg" as pkg
+
+pkg.package({
+  "name": "larz-meter",
+  "version": "0.1.0",
+  "summary": "Wrap any command with LarzOS wallet metering - check budget, run, debit only on success",
+  "arch": "all",
+  "maintainer": "drlarzlalaa <folajimifadebi1992@gmail.com>",
+  "depends": ["larz-system"],
+  "section": "utils",
+  "install": [
+    "install -Dm755 larz-meter.lz $DESTDIR/usr/lib/larz-meter/larz-meter.lz",
+    "install -Dm755 larz-meter.wrapper $DESTDIR/usr/bin/larz-meter",
+  ],
+})

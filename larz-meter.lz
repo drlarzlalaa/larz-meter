@@ -1,0 +1,100 @@
+#!/usr/bin/env larzscript
+# larz-meter - wrap any shell command with LarzOS wallet metering.
+#
+# Checks a spend category's budget *before* running the command, runs it
+# with a real terminal (stdio inherited, so interactive/streaming commands
+# still work), and debits the wallet only if the command actually succeeds.
+# A failed command is never charged.
+#
+#   larz-meter --category api --price 0.002 -- curl -s https://example.com
+#   larz-meter --category api --price 0.10 --note "batch job" --ref myjob -- ./run.sh
+#   larz-meter --category api --price 0.002 --dry-run -- curl -s https://example.com
+#
+# Exit code is the wrapped command's exit code (or 2 if the budget blocked
+# it before it ran), so larz-meter composes fine in `&&` chains, CI steps,
+# and `set -e` scripts.
+
+import "larzos/wallet" as wal
+
+fn usage() {
+  print("usage: larz-meter --category <cat> --price <usd> [--note TEXT] [--ref REF] [--dry-run] -- <command...>")
+  print("")
+  print("  --category   wallet budget category to check/debit against (required)")
+  print("  --price      USD amount to check and debit on success (required)")
+  print("  --note       free-text note for the ledger entry (default: the command line)")
+  print("  --ref        ledger ref (default: the command's first word)")
+  print("  --dry-run    check the budget and print what would happen, run nothing")
+  print("")
+  print("Budgets are set with: larz budget <category> <amount>")
+  print("The ledger is viewable with: larz spend [category]  /  larz wallet")
+}
+
+fn shq(s) { return "'" + str(s).replace("'", "'\\''") + "'" }
+
+fn parse(argv) {
+  let opts = {"category": "", "price": "", "note": "", "ref": "", "dry_run": false}
+  let i = 0
+  while i < len(argv) {
+    let a = argv[i]
+    if a == "--" {
+      return {"opts": opts, "cmd": argv[i + 1:]}
+    } else if a == "--category" {
+      i = i + 1; opts["category"] = argv[i]
+    } else if a == "--price" {
+      i = i + 1; opts["price"] = argv[i]
+    } else if a == "--note" {
+      i = i + 1; opts["note"] = argv[i]
+    } else if a == "--ref" {
+      i = i + 1; opts["ref"] = argv[i]
+    } else if a == "--dry-run" {
+      opts["dry_run"] = true
+    } else if a == "--help" or a == "-h" {
+      usage(); exit(0)
+    } else {
+      print("larz-meter: unknown argument '" + a + "' (did you forget '--' before the command?)")
+      exit(2)
+    }
+    i = i + 1
+  }
+  return {"opts": opts, "cmd": []}
+}
+
+let parsed = parse(args)
+let opts = parsed["opts"]
+let cmd = parsed["cmd"]
+
+if opts["category"] == "" or opts["price"] == "" or len(cmd) == 0 {
+  usage()
+  exit(2)
+}
+
+let amount = float(opts["price"])
+let category = opts["category"]
+let cmdline = join(cmd, " ")
+let ref = opts["ref"] == "" ? cmd[0] : opts["ref"]
+let note = opts["note"] == "" ? cmdline : opts["note"]
+
+let check = wal.check(category, amount)
+if not check["ok"] {
+  print("larz-meter: blocked - " + check["reason"])
+  exit(2)
+}
+
+if opts["dry_run"] {
+  let capmsg = check["cap"] < 0.0 ? "uncapped" : (wal.fmt(check["remaining"]) + " left this month before this run")
+  print("larz-meter: would check '" + category + "' (" + capmsg + "), run `" + cmdline +
+        "`, and debit " + wal.fmt(amount) + " on success")
+  exit(0)
+}
+
+let shellcmd = ""
+for part in cmd { shellcmd = shellcmd + shq(part) + " " }
+let rc = run(shellcmd.strip())
+
+if rc == 0 {
+  wal.debit(category, amount, ref, note)
+  print("larz-meter: ok - charged " + wal.fmt(amount) + " to '" + category + "'")
+} else {
+  print("larz-meter: command exited " + str(rc) + " - not charged")
+}
+exit(rc)
